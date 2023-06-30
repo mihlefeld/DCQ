@@ -69,11 +69,13 @@ int test_M() {
 
 int main() {
 //    test_M();
-    auto img = cv::imread("../_data/pictures/natural/blue macaw back turned.jpg");
+    auto img = cv::imread("../_data/pictures/paper/mandrill.png");
     auto tensor = dcq::utils::image_to_tensor(img);
 
-    auto params = dcq::algorithm::solve(tensor, 3, 8);
+    dcq::Parameters params;
+    TIME_IT(params = dcq::algorithm::solve(tensor, 3, 8);)
+    DEBUG_COMPARE(tensor, params.reconstruct())
     auto recon = dcq::utils::tensor_to_image(params.reconstruct());
-    cv::imwrite("../_data/qpictures/blue macaw back turned.png", recon);
+    cv::imwrite("../_data/qpictures/mandrill.png", recon);
     return 0;
 }

@@ -15,7 +15,7 @@
 auto start = std::chrono::high_resolution_clock::now(); \
 x; \
 auto stop = std::chrono::high_resolution_clock::now();  \
-std::cout << #x" took " << std::chrono::duration_cast<milliseconds>(stop - start).count() << "ms" << std::endl; \
+std::cout << #x" took " << std::chrono::duration_cast<std::chrono::milliseconds>(stop - start).count() << "ms" << std::endl; \
 }
 #include <torch/torch.h>
 #include <opencv2/opencv.hpp>

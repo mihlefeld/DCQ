@@ -19,12 +19,8 @@ namespace dcq::algorithm {
 
     void compute_colors(dcq::Parameters &params, torch::Tensor &b, torch::Tensor &a);
 
-    bool update_M(int iy, int ix, dcq::Parameters &params, dcq::Kernels &kernels, torch::Tensor &p);
-
     bool update_M(int iy, int ix, float *M_data, float *Y_data, float *p_data, float *bii_data,
                   int ks, int h, int w, int c, int K);
-
-    void update_p(int iy, int ix, dcq::Parameters &params, torch::Tensor &a, torch::Tensor &b0, torch::Tensor &p);
 
     void update_p(int iy, int ix, float *M_data, float *Y_data, float *a_data, float *b0_data, float *p_data,
                   int ks, int h, int w, int c, int K);

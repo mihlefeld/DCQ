@@ -30,7 +30,6 @@ dcq::Parameters dcq::algorithm::solve(
                 add_color(lconst.X, params);
             }
             icm(lconst, params, kernels, p);
-            DEBUG_COMPARE(lconst.X, params.reconstruct())
         } while (params.M.size(2) < lconst.max_K);
         if (i != 0) {
             propagate_M(params);
@@ -61,7 +60,7 @@ dcq::Parameters dcq::algorithm::icm(
     float old_loss = INFINITY;
     do {
         old_loss = loss;
-        TIME_IT(compute_assignments(params, constants, kernels, p));
+        compute_assignments(params, constants, kernels, p);
         compute_colors(params, kernels.b, constants.a);
         loss = compute_loss(constants.X, params, kernels.W);
         std::cout << "loss = " << loss << std::endl;
@@ -128,7 +127,6 @@ void dcq::algorithm::compute_assignments(
     int c = p.size(2);
     int K = params.M.size(2);
 
-
     for (int iy = 0; iy < h; iy++) {
         for (int ix = 0; ix < w; ix++) {
             if (update_M(iy, ix, M_data, Y_data, p_data, bii_data, ks, h, w, c, K)) {
@@ -148,6 +146,7 @@ void dcq::algorithm::compute_colors(
     int h = params.M.size(0);
     int w = params.M.size(1);
     int padding = b.size(1) / 2;
+
     auto M_pad = F::pad(
             dcq::utils::to_batched(params.M),
             F::PadFuncOptions({padding, padding, padding, padding})
@@ -162,21 +161,6 @@ void dcq::algorithm::compute_colors(
     params.Y = new_Y.permute({1, 0}).flatten().reshape({K, c});
 }
 
-bool dcq::algorithm::update_M(
-        int iy, int ix,
-        dcq::Parameters &params,
-        dcq::Kernels &kernels,
-        torch::Tensor &p
-) {
-    int ks = kernels.b.size(0);
-    auto bii = kernels.b.index({ks / 2, ks / 2, None});
-    auto pi = p.index({iy, ix, None});
-    auto mingv_i = (params.Y * (pi + bii * params.Y)).sum(1).argmin().item<int>();
-    bool changed = (params.M.index({iy, ix, mingv_i}) == 0).item<bool>();
-    params.M.index_put_({iy, ix}, 0);
-    params.M.index_put_({iy, ix, mingv_i}, 1);
-    return changed;
-}
 
 bool dcq::algorithm::update_M(int iy, int ix, float *M_data, float *Y_data, float *p_data, float *bii_data,
                           int ks, int h, int w, int c, int K) {
@@ -204,44 +188,6 @@ bool dcq::algorithm::update_M(int iy, int ix, float *M_data, float *Y_data, floa
     }
     mi[amin] = 1;
     return changed;
-}
-
-void dcq::algorithm::update_p(
-        int iy, int ix,
-        dcq::Parameters &params,
-        torch::Tensor &a,
-        torch::Tensor &b0,
-        torch::Tensor &p
-) {
-    int ks = b0.size(0);
-    int ksh = ks / 2;
-    int h = a.size(0);
-    int w = a.size(1);
-    int c = a.size(2);
-    dcq::Region region = get_neighborhood(iy, ix, ks, a);
-
-    auto windows = torch::zeros({(region.b - region.t) * (region.r - region.l), ks * ks, c});
-    for (int i0 = region.t; i0 < region.b; i0++) {
-        for (int i1 = region.l; i1 < region.r; i1++) {
-            for (int ki = 0; ki < ks; ki++) {
-                int iy = i0 + ksh - ki;
-                for (int kj = 0; kj < ks; kj++) {
-                    int ix = i1 + ksh - kj;
-                    if (h > iy && iy >= 0 && w > ix && ix >= 0) {
-                        auto v = params.M.index({iy, ix}).argmax().item<int>();
-                        auto Yv = params.Y.index({v});
-                        int w_index = (i0 - region.t) * (region.r - region.l) + (i1 - region.l);
-                        int k_index = ki * ks + kj;
-                        windows.index_put_({w_index, k_index}, Yv);
-                    }
-                }
-            }
-        }
-    }
-    auto s = a.index({Slice(region.t, region.b), Slice(region.l, region.r)}).clone();
-    auto b02 = (b0 * 2).reshape({1, ks * ks, c});
-    s += (b02 * windows).sum(1).reshape({region.b - region.t, region.r - region.l, c});
-    p.index_put_({Slice(region.t, region.b), Slice(region.l, region.r)}, s);
 }
 
 int argmax(float *data, int len) {
