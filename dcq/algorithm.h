@@ -6,12 +6,13 @@
 #define DCQ_ALGORITHM_H
 
 #include "types.h"
+#include "PBar.h"
 
 namespace dcq::algorithm {
     dcq::Parameters solve(torch::Tensor &X, int ks, int max_K);
 
     dcq::Parameters icm(dcq::LConst &constants, dcq::Parameters &params,
-                        dcq::Kernels &kernels, torch::Tensor &p);
+                        dcq::Kernels &kernels, torch::Tensor &p, PBar &pbar);
 
     void add_color(torch::Tensor &X, dcq::Parameters &params);
 

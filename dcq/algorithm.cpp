@@ -15,21 +15,29 @@ dcq::Parameters dcq::algorithm::solve(
         int ks,
         int max_K
 ) {
+    auto pbar = PBar(2, 0);
     int c = X.size(2);
     auto kernels = dcq::init::init_kernels(ks, c);
     auto constants = dcq::init::init_constants(X, kernels.b, max_K);
     auto params = dcq::init::init_parameters(constants.Xs.front(), constants.Xs.back());
+    pbar.max_L = constants.max_level + 1;
+    pbar.max_K = constants.max_K;
 
     for (int i = constants.max_level; i >= 0; i--) {
         LConst lconst{constants.Xs.at(i), constants.as.at(i),
                       constants.max_Ks.index({i}).item<int>()};
+        pbar.l = constants.max_level + 1 - i;
+        pbar.update();
         auto p = compute_p(params, lconst.a, kernels.b0);
 
         do {
             if (params.Y.size(0) < lconst.max_K) {
+                pbar.start(pbar_timers::ADD_TIMER);
                 add_color(lconst.X, params);
+                pbar.K = params.Y.size(0);
+                pbar.stop(pbar_timers::ADD_TIMER);
             }
-            icm(lconst, params, kernels, p);
+            icm(lconst, params, kernels, p, pbar);
         } while (params.Y.size(0) < lconst.max_K);
         if (i != 0) {
             propagate_M(params);
@@ -53,31 +61,29 @@ dcq::Parameters dcq::algorithm::icm(
         dcq::LConst &constants,
         dcq::Parameters &params,
         dcq::Kernels &kernels,
-        torch::Tensor &p
+        torch::Tensor &p,
+        PBar &pbar
 ) {
     int h = params.M.size(0);
     int w = params.M.size(1);
     int K = params.Y.size(0);
     float loss = compute_loss(constants.X, params, kernels.W);
     float old_loss = INFINITY;
-    int changed = 0;
+    int changed;
     do {
-        printf("\33[2K\r");
         old_loss = loss;
 
-        auto start1 = std::chrono::high_resolution_clock::now();
+        pbar.start(pbar_timers::ASSIGN_TIMER);
         changed = compute_assignments(params, constants, kernels, p);
-        auto stop1 = std::chrono::high_resolution_clock::now();
+        pbar.stop(pbar_timers::ASSIGN_TIMER);
 
-        auto start2 = std::chrono::high_resolution_clock::now();
+        pbar.start(pbar_timers::COMPUTE_TIMER);
         compute_colors(params, kernels.b, constants.a);
-        auto stop2 = std::chrono::high_resolution_clock::now();
+        pbar.stop(pbar_timers::COMPUTE_TIMER);
 
         loss = compute_loss(constants.X, params, kernels.W);
-        std::cout << "K = " << K << " (" << h << ", " << w << ")" << " loss = " << loss << " changed = " << changed
-                  << " assign took " << std::chrono::duration_cast<std::chrono::milliseconds>(stop1 - start1).count()
-                  << "ms" << " compute took "
-                  << std::chrono::duration_cast<std::chrono::milliseconds>(stop2 - start2).count() << "ms" << std::endl;
+        pbar.loss = loss;
+        pbar.update();
     } while (changed > 0 && loss < old_loss);
     return params;
 }
@@ -131,6 +137,7 @@ int dcq::algorithm::compute_assignments(
         torch::Tensor &p
 ) {
     int ks = kernels.b.size(0);
+    int ksh = ks / 2;
     auto M_data = params.M.data_ptr<int>();
     auto Y_data = params.Y.data_ptr<float>();
     auto bii_data = kernels.b.index({ks / 2, ks / 2}).data_ptr<float>();
@@ -144,16 +151,42 @@ int dcq::algorithm::compute_assignments(
     int K = params.Y.size(0);
     int changed = 0;
 
-    for (int iy = 0; iy < h; iy++) {
-        for (int ix = 0; ix < w; ix++) {
-            if (update_M(iy, ix, M_data, Y_data, p_data, bii_data, ks, h, w, c, K)) {
-                update_p(iy, ix, M_data, Y_data, a_data, b0_data, p_data, ks, h, w, c, K);
-                changed += 1;
-            }
-        }
+    auto changed_map = new bool[h * w];
+
+    for (int i = 0; i < h * w; i++) {
+        changed_map[i] = true;
     }
 
-    return changed;
+    int total_changed = 0;
+    do {
+        changed = 0;
+        for (int iy = 0; iy < h - 1; iy++) {
+            for (int ix = 0; ix < w - 1; ix++) {
+                if (!changed_map[iy * w + ix]) continue;
+
+                if (update_M(iy, ix, M_data, Y_data, p_data, bii_data, ks, h, w, c, K)) {
+                    update_p(iy, ix, M_data, Y_data, a_data, b0_data, p_data, ks, h, w, c, K);
+                    changed += 1;
+                    int ktop = std::max(iy - ksh, 0);
+                    int kbottom = std::min(iy + ksh, h - 1) + 1;
+                    int kleft = std::max(ix - ksh, 0);
+                    int kright = std::min(ix + ksh, w - 1) + 1;
+
+                    for (int ky = ktop; ky < kbottom; ky++) {
+                        for (int kx = kleft; kx < kright; kx++) {
+                            changed_map[ky * w + kx] = true;
+                        }
+                    }
+                }
+                changed_map[iy * w + ix] = false;
+            }
+        }
+        total_changed += changed;
+    } while (changed > 0);
+
+    delete[] changed_map;
+
+    return total_changed;
 }
 
 void dcq::algorithm::compute_colors(
@@ -177,17 +210,17 @@ void dcq::algorithm::compute_colors(
     float *R_data = Rn.data_ptr<float>();
 
     for (int iy = 0; iy < h; iy++) {
-        for (int ix = 0; ix < w; ix++) {
-            int v = M_data[iy * w + ix];
-            for (int ky = 0; ky < ks; ky++) {
+        for (int ky = 0; ky < ks; ky++) {
+            for (int ix = 0; ix < w; ix++) {
+                int v = M_data[iy * w + ix];
+                int kiy = iy + ky - ks / 2;
                 for (int kx = 0; kx < ks; kx++) {
-                    int kiy = iy + ky - ks / 2;
                     int kix = ix + kx - ks / 2;
                     if (kiy < 0 || kix < 0 || kiy >= h || kix >= w) continue;
                     int al = M_data[kiy * w + kix];
+                    float *bxy = &b_data[ky * ks * c + kx * c];
                     for (int ci = 0; ci < c; ci++) {
-                        float bci = b_data[ky * ks * c + kx * c + ci];
-                        S_data[v * K * c + al * c + ci] += bci;
+                        S_data[v * K * c + al * c + ci] += bxy[ci];
                     }
                 }
             }
@@ -323,11 +356,4 @@ void dcq::algorithm::propagate_M(dcq::Parameters &params) {
     new_M.index_put_({Slice(1, None, 2), Slice(1, None, 2)}, params.M);
 
     params.M = new_M;
-}
-
-dcq::Region dcq::algorithm::get_neighborhood(int iy, int ix, int ks, torch::Tensor &a) {
-    int ksh = ks / 2;
-    int h = a.size(0);
-    int w = a.size(1);
-    return {std::max(iy - ksh, 0), std::min(iy + ksh, h - 1) + 1, std::max(ix - ksh, 0), std::min(ix + ksh, w - 1) + 1};
 }

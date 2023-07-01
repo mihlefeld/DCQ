@@ -114,12 +114,13 @@ int main(int argc, char *argv[]) {
         fs::create_directories(output_path);
     }
 
-    auto img = cv::imread(input_path.string());
-    std::cout << "Reading image " << input_path << "with size " << img.rows << "x" << img.cols << std::endl;
+    auto img = cv::imread(input_path.string(), cv::IMREAD_UNCHANGED);
+    std::cout << "Reading image " << input_path << "with size " << img.rows << "x" << img.cols << "x" << img.channels()
+              << std::endl;
     auto tensor = dcq::utils::image_to_tensor(img);
 
     dcq::Parameters params;
-    TIME_IT(params = dcq::algorithm::solve(tensor, ks, palette);)
+    params = dcq::algorithm::solve(tensor, ks, palette);
     auto recon = dcq::utils::tensor_to_image(params.reconstruct());
     cv::imwrite((output_path / (name + ".png")).string(), recon);
     return 0;
