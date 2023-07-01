@@ -4,7 +4,7 @@
 #include "algorithm.h"
 #include "init.h"
 #include "utils.h"
-#include <chrono>
+#include <algorithm>
 
 using namespace std::chrono;
 using namespace torch::indexing;
@@ -55,16 +55,30 @@ dcq::Parameters dcq::algorithm::icm(
         dcq::Kernels &kernels,
         torch::Tensor &p
 ) {
+    int h = params.M.size(0);
+    int w = params.M.size(1);
+    int K = params.M.size(2);
     float loss = compute_loss(constants.X, params, kernels.W);
-    std::cout << "loss = " << loss << std::endl;
     float old_loss = INFINITY;
+    int changed = 0;
     do {
+        printf("\33[2K\r");
         old_loss = loss;
-        compute_assignments(params, constants, kernels, p);
+
+        auto start1 = std::chrono::high_resolution_clock::now();
+        changed = compute_assignments(params, constants, kernels, p);
+        auto stop1 = std::chrono::high_resolution_clock::now();
+
+        auto start2 = std::chrono::high_resolution_clock::now();
         compute_colors(params, kernels.b, constants.a);
+        auto stop2 = std::chrono::high_resolution_clock::now();
+
         loss = compute_loss(constants.X, params, kernels.W);
-        std::cout << "loss = " << loss << std::endl;
-    } while (!dcq::utils::is_close(loss, old_loss) && loss < old_loss);
+        std::cout << "K = " << K << " (" << h << ", " << w << ")" << " loss = " << loss << " changed = " << changed
+                  << " assign took " << std::chrono::duration_cast<std::chrono::milliseconds>(stop1 - start1).count()
+                  << "ms" << " compute took "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(stop2 - start2).count() << "ms" << std::endl;
+    } while (changed > 0 && loss < old_loss);
     return params;
 }
 
@@ -108,7 +122,7 @@ void dcq::algorithm::add_color(
     params.Y = new_Y;
 }
 
-void dcq::algorithm::compute_assignments(
+int dcq::algorithm::compute_assignments(
         dcq::Parameters &params,
         dcq::LConst &constants,
         dcq::Kernels &kernels,
@@ -126,14 +140,18 @@ void dcq::algorithm::compute_assignments(
     int w = p.size(1);
     int c = p.size(2);
     int K = params.M.size(2);
+    int changed = 0;
 
     for (int iy = 0; iy < h; iy++) {
         for (int ix = 0; ix < w; ix++) {
             if (update_M(iy, ix, M_data, Y_data, p_data, bii_data, ks, h, w, c, K)) {
                 update_p(iy, ix, M_data, Y_data, a_data, b0_data, p_data, ks, h, w, c, K);
+                changed += 1;
             }
         }
     }
+
+    return changed;
 }
 
 void dcq::algorithm::compute_colors(
@@ -145,25 +163,63 @@ void dcq::algorithm::compute_colors(
     int c = params.Y.size(1);
     int h = params.M.size(0);
     int w = params.M.size(1);
-    int padding = b.size(1) / 2;
+    int ks = b.size(0);
+    int pad = b.size(0) / 2;
 
-    auto M_pad = F::pad(
-            dcq::utils::to_batched(params.M),
-            F::PadFuncOptions({padding, padding, padding, padding})
-                    .mode(torch::kReflect)
-    );
-    auto b_rep = dcq::utils::to_conv_kernel(b).repeat({K, 1, 1, 1});
-    auto M_alpha = F::conv2d(M_pad, b_rep,
-                             F::Conv2dFuncOptions().groups(K)).reshape({K, c, h, w});
-    auto S = torch::einsum("hwv,achw->cav", {params.M, M_alpha});
+    if (params.M.sum({1, 0}).min().item<float>() == 0) {
+        std::cerr << "COULD NOT COMPUTE COLORS" << std::endl;
+        return;
+    }
+
+    auto M_batched = dcq::utils::to_batched(params.M);
+    M_batched = M_batched.flatten().reshape(M_batched.sizes());
+    auto M_pad = F::pad(M_batched, F::PadFuncOptions({pad, pad, pad, pad}));
+    M_pad = M_pad.index({0, Slice(), None});
+    M_pad = M_pad.flatten().reshape(M_pad.sizes());
+    auto conv_b = dcq::utils::to_conv_kernel(b);
+    conv_b = conv_b.flatten().reshape(conv_b.sizes());
+    auto M_alpha = F::conv2d(M_pad, conv_b);
+    auto S = torch::einsum("xvhw,achw->cav", {M_batched, M_alpha});
     auto R = torch::einsum("hwv,hwc->cv", {params.M, a});
+
+//    auto Sn = torch::zeros({K, K, c});
+//    float *M_data = params.M.data_ptr<float>();
+//    float *b_data = b.data_ptr<float>();
+//    float *S_data = Sn.data_ptr<float>();
+
+//    #pragma omp parallel for()
+//    for (int iy = 0; iy < h; iy++) {
+//        for (int ix = 0; ix < w; ix++) {
+//            for (int v = 0; v < K; v++) {
+//                float miv = M_data[iy * w * K + ix * K + v];
+//                if (miv == 0) continue;
+//                for (int ky = 0; ky < ks; ky++) {
+//                    for (int kx = 0; kx < ks; kx++) {
+//                        int kiy = iy + ky - ks / 2;
+//                        int kix = ix + kx - ks / 2;
+//                        if (kiy < 0 || kix < 0 || kiy >= h || kix >= w) continue;
+//                        for (int al = 0; al < K; al++) {
+//                            float mia = M_data[kiy * w * K + kix * K + al];
+//                            if (mia == 0) continue;
+//                            for (int ci = 0; ci < c; ci++) {
+//                                float bci = b_data[ky * ks * c + kx * c + ci];
+//                                S_data[v * K * c + al * c + ci] += bci;
+//                            }
+//                        }
+//                    }
+//                }
+//            }
+//        }
+//    }
+//    auto new_Y = torch::linalg::solve(-2 * Sn.permute({2, 0, 1}), R, true);
+
     auto new_Y = torch::linalg::solve(-2 * S, R, true);
     params.Y = new_Y.permute({1, 0}).flatten().reshape({K, c});
 }
 
 
 bool dcq::algorithm::update_M(int iy, int ix, float *M_data, float *Y_data, float *p_data, float *bii_data,
-                          int ks, int h, int w, int c, int K) {
+                              int ks, int h, int w, int c, int K) {
     float *pi = &p_data[iy * w * c + ix * c];
     float *mi = &M_data[iy * w * K + ix * K];
     float min = INFINITY;
@@ -203,13 +259,14 @@ int argmax(float *data, int len) {
 }
 
 
-void dcq::algorithm::update_p(int iy, int ix, float *M_data, float *Y_data, float *a_data, float *b0_data, float *p_data,
-              int ks, int h, int w, int c, int K) {
+void
+dcq::algorithm::update_p(int iy, int ix, float *M_data, float *Y_data, float *a_data, float *b0_data, float *p_data,
+                         int ks, int h, int w, int c, int K) {
     int ksh = ks / 2;
     int top = std::max(iy - ksh, 0);
     int bottom = std::min(iy + ksh, h - 1) + 1;
     int left = std::max(ix - ksh, 0);
-    int right =  std::min(ix + ksh, w - 1) + 1;
+    int right = std::min(ix + ksh, w - 1) + 1;
 
     float sum[4];
 

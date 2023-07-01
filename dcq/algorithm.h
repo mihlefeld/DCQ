@@ -15,7 +15,7 @@ namespace dcq::algorithm {
 
     void add_color(torch::Tensor &X, dcq::Parameters &params);
 
-    void compute_assignments(dcq::Parameters &params, dcq::LConst &constants, dcq::Kernels &kernels, torch::Tensor &p);
+    int compute_assignments(dcq::Parameters &params, dcq::LConst &constants, dcq::Kernels &kernels, torch::Tensor &p);
 
     void compute_colors(dcq::Parameters &params, torch::Tensor &b, torch::Tensor &a);
 

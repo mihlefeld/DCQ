@@ -65,9 +65,10 @@ dcq::Constants dcq::init::init_constants(const torch::Tensor &X, const torch::Te
     auto max_level = (int) std::floor(std::log2(std::min(hk, wk) / 5));
 
     // construct geometric space from logspace
-    auto space = torch::logspace(2, 1, max_level + 1, 2);
-    space *= ((float) max_K - 2) / (space.max() - space.min());
-    space = (space - space.min() + 2).ceil().to(torch::kInt32);
+    auto space = torch::logspace(std::log2(max_K), std::log2(2), max_level + 1, 2);
+    space = space.floor().to(torch::kInt32);
+
+    std::cout << space << std::endl;
 
     // pad the image
     int div = 2 << max_level;
@@ -79,10 +80,6 @@ dcq::Constants dcq::init::init_constants(const torch::Tensor &X, const torch::Te
     int pad_bottom = diff_h - pad_top;
     int pad_left = diff_w / 2;
     int pad_right = diff_w - pad_left;
-
-    // c, h, w
-    PRINT_SHAPE(b)
-    PRINT_SHAPE(dcq::utils::to_conv_kernel(b))
 
     auto X_pad = F::pad(X.index({None}),
                         F::PadFuncOptions({0, 0, pad_left, pad_right, pad_top, pad_bottom})
