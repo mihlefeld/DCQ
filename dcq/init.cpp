@@ -15,7 +15,7 @@ dcq::Parameters dcq::init::init_parameters(const torch::Tensor &Xl, const torch:
     int h = Xs.size(0);
     int w = Xs.size(1);
     int c = Xs.size(2);
-    auto M = torch::ones({h, w, 1});
+    auto M = torch::zeros({h, w}, torch::kInt32);
     auto Y = Xl.mean({1, 0}).reshape({1, c});
     return {M, Y};
 
@@ -43,8 +43,6 @@ dcq::Kernels dcq::init::init_kernels(int ks, int c) {
                        F::Conv2dFuncOptions().groups(c).padding({ks - 1, ks - 1})
     );
     b = dcq::utils::from_batched(b);
-    PRINT_SHAPE(W)
-    PRINT_SHAPE(b)
     auto b0 = b.clone();
     b0.index_put_({ks - 1, ks - 1}, 0);
 
@@ -67,8 +65,6 @@ dcq::Constants dcq::init::init_constants(const torch::Tensor &X, const torch::Te
     // construct geometric space from logspace
     auto space = torch::logspace(std::log2(max_K), std::log2(2), max_level + 1, 2);
     space = space.floor().to(torch::kInt32);
-
-    std::cout << space << std::endl;
 
     // pad the image
     int div = 2 << max_level;

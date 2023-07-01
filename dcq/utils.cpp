@@ -84,12 +84,12 @@ void dcq::utils::compare_show(const std::string &window_name, const torch::Tenso
     dcq::utils::imshow(window_name, torch::concat({a, b}, 1), add_shape, normalize);
 }
 
-void dcq::utils::count_assignments(const std::string &prefix, torch::Tensor &M) {
-    int K = M.size(2);
-    std::cout << prefix << " K=" << K << " ";
-    auto total = M.sum();
+void dcq::utils::count_assignments(const std::string &prefix, torch::Tensor &M, int K) {
+    int max = M.max().item<int>();
+    std::cout << prefix << " K=" << K << " max=" << max << ": ";
+    auto total = M.size(0) * M.size(1);
     for (int i = 0; i < K; i++) {
-        std::cout << (M.index({i}).sum() / total).item<float>() << " ";
+        std::cout << ((M == i).sum() / total).item<float>() << " ";
     }
     std::cout << std::endl;
 }

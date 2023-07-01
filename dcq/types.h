@@ -36,7 +36,7 @@ namespace dcq {
         torch::Tensor Y;
 
         torch::Tensor reconstruct() {
-            return torch::einsum("hwk,kc->hwc", {M, Y});
+            return Y.index({M});
         }
     };
 

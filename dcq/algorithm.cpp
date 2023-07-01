@@ -26,11 +26,11 @@ dcq::Parameters dcq::algorithm::solve(
         auto p = compute_p(params, lconst.a, kernels.b0);
 
         do {
-            if (params.M.size(2) < lconst.max_K) {
+            if (params.Y.size(0) < lconst.max_K) {
                 add_color(lconst.X, params);
             }
             icm(lconst, params, kernels, p);
-        } while (params.M.size(2) < lconst.max_K);
+        } while (params.Y.size(0) < lconst.max_K);
         if (i != 0) {
             propagate_M(params);
         }
@@ -57,7 +57,7 @@ dcq::Parameters dcq::algorithm::icm(
 ) {
     int h = params.M.size(0);
     int w = params.M.size(1);
-    int K = params.M.size(2);
+    int K = params.Y.size(0);
     float loss = compute_loss(constants.X, params, kernels.W);
     float old_loss = INFINITY;
     int changed = 0;
@@ -86,16 +86,19 @@ void dcq::algorithm::add_color(
         torch::Tensor &X,
         dcq::Parameters &params
 ) {
-    int K = params.M.size(2);
-    auto new_M = F::pad(params.M, F::PadFuncOptions({0, 1}));
+    int K = params.Y.size(0);
+    auto new_M = params.M.clone();
     auto new_Y = F::pad(params.Y.index({None}), F::PadFuncOptions({0, 0, 0, 1})).index({0});
+
+    auto comp = torch::arange(K).reshape({1, 1, K});
+    auto one_hot_M = params.M.index({Slice(), Slice(), None}) == comp;
 
     auto MY = params.reconstruct();
     auto diff = (X - MY).pow(2).sum({-1}, true);
-    auto distortions = (diff * params.M).sum({1, 0});
+    auto distortions = (diff * one_hot_M).sum({1, 0});
     auto v = distortions.argmax().item<int>();
 
-    auto bool_M = params.M.index({Slice(), Slice(), v}) == 1;
+    auto bool_M = params.M == v;
     auto colors = X.index({bool_M});
     auto center_a_idx = diff.index({bool_M}).argmax();
     auto center_b_idx = diff.index({bool_M}).argmin();
@@ -105,15 +108,14 @@ void dcq::algorithm::add_color(
 
     auto center_diff_a = (center_a.index({None, None}) - X).pow(2).sum({-1});
     auto center_diff_b = (center_b.index({None, None}) - X).pow(2).sum({-1});
-    auto index = ((center_diff_b <= center_diff_a) * params.M.index({Slice(), Slice(), v})) == 1;
+    auto index = ((center_diff_b <= center_diff_a) * bool_M) == 1;
 
-    new_M.index({Slice(), Slice(), v}).index_put_({index}, 0);
-    new_M.index({Slice(), Slice(), K}).index_put_({index}, 1);
+    new_M.index_put_({index}, K);
 
-    auto v_sum = X.index({new_M.index({Slice(), Slice(), v}) == 1}).sum(0);
-    auto v_mean = v_sum / new_M.index({Slice(), Slice(), v}).sum();
-    auto k_sum = X.index({new_M.index({Slice(), Slice(), K}) == 1}).sum(0);
-    auto k_mean = k_sum / new_M.index({Slice(), Slice(), K}).sum();
+    auto v_sum = X.index({new_M == v}).sum(0);
+    auto v_mean = v_sum / (new_M == v).sum();
+    auto k_sum = X.index({new_M == K}).sum(0);
+    auto k_mean = k_sum / (new_M == K).sum();
 
     new_Y.index_put_({v}, v_mean);
     new_Y.index_put_({K}, k_mean);
@@ -129,7 +131,7 @@ int dcq::algorithm::compute_assignments(
         torch::Tensor &p
 ) {
     int ks = kernels.b.size(0);
-    auto M_data = params.M.data_ptr<float>();
+    auto M_data = params.M.data_ptr<int>();
     auto Y_data = params.Y.data_ptr<float>();
     auto bii_data = kernels.b.index({ks / 2, ks / 2}).data_ptr<float>();
     auto a_data = constants.a.data_ptr<float>();
@@ -139,7 +141,7 @@ int dcq::algorithm::compute_assignments(
     int h = p.size(0);
     int w = p.size(1);
     int c = p.size(2);
-    int K = params.M.size(2);
+    int K = params.Y.size(0);
     int changed = 0;
 
     for (int iy = 0; iy < h; iy++) {
@@ -166,101 +168,74 @@ void dcq::algorithm::compute_colors(
     int ks = b.size(0);
     int pad = b.size(0) / 2;
 
-    if (params.M.sum({1, 0}).min().item<float>() == 0) {
-        std::cerr << "COULD NOT COMPUTE COLORS" << std::endl;
-        return;
+    auto Sn = torch::zeros({K, K, c});
+    auto Rn = torch::zeros({K, c});
+    int *M_data = params.M.data_ptr<int>();
+    float *a_data = a.data_ptr<float>();
+    float *b_data = b.data_ptr<float>();
+    float *S_data = Sn.data_ptr<float>();
+    float *R_data = Rn.data_ptr<float>();
+
+    for (int iy = 0; iy < h; iy++) {
+        for (int ix = 0; ix < w; ix++) {
+            int v = M_data[iy * w + ix];
+            for (int ky = 0; ky < ks; ky++) {
+                for (int kx = 0; kx < ks; kx++) {
+                    int kiy = iy + ky - ks / 2;
+                    int kix = ix + kx - ks / 2;
+                    if (kiy < 0 || kix < 0 || kiy >= h || kix >= w) continue;
+                    int al = M_data[kiy * w + kix];
+                    for (int ci = 0; ci < c; ci++) {
+                        float bci = b_data[ky * ks * c + kx * c + ci];
+                        S_data[v * K * c + al * c + ci] += bci;
+                    }
+                }
+            }
+        }
     }
 
-    auto M_batched = dcq::utils::to_batched(params.M);
-    M_batched = M_batched.flatten().reshape(M_batched.sizes());
-    auto M_pad = F::pad(M_batched, F::PadFuncOptions({pad, pad, pad, pad}));
-    M_pad = M_pad.index({0, Slice(), None});
-    M_pad = M_pad.flatten().reshape(M_pad.sizes());
-    auto conv_b = dcq::utils::to_conv_kernel(b);
-    conv_b = conv_b.flatten().reshape(conv_b.sizes());
-    auto M_alpha = F::conv2d(M_pad, conv_b);
-    auto S = torch::einsum("xvhw,achw->cav", {M_batched, M_alpha});
-    auto R = torch::einsum("hwv,hwc->cv", {params.M, a});
+    for (int iy = 0; iy < h; iy++) {
+        for (int ix = 0; ix < w; ix++) {
+            int v = M_data[iy * w + ix];
+            for (int ci = 0; ci < c; ci++) {
+                R_data[v * c + ci] += a_data[iy * w * c + ix * c + ci];
+            }
+        }
+    }
 
-//    auto Sn = torch::zeros({K, K, c});
-//    float *M_data = params.M.data_ptr<float>();
-//    float *b_data = b.data_ptr<float>();
-//    float *S_data = Sn.data_ptr<float>();
-
-//    #pragma omp parallel for()
-//    for (int iy = 0; iy < h; iy++) {
-//        for (int ix = 0; ix < w; ix++) {
-//            for (int v = 0; v < K; v++) {
-//                float miv = M_data[iy * w * K + ix * K + v];
-//                if (miv == 0) continue;
-//                for (int ky = 0; ky < ks; ky++) {
-//                    for (int kx = 0; kx < ks; kx++) {
-//                        int kiy = iy + ky - ks / 2;
-//                        int kix = ix + kx - ks / 2;
-//                        if (kiy < 0 || kix < 0 || kiy >= h || kix >= w) continue;
-//                        for (int al = 0; al < K; al++) {
-//                            float mia = M_data[kiy * w * K + kix * K + al];
-//                            if (mia == 0) continue;
-//                            for (int ci = 0; ci < c; ci++) {
-//                                float bci = b_data[ky * ks * c + kx * c + ci];
-//                                S_data[v * K * c + al * c + ci] += bci;
-//                            }
-//                        }
-//                    }
-//                }
-//            }
-//        }
-//    }
-//    auto new_Y = torch::linalg::solve(-2 * Sn.permute({2, 0, 1}), R, true);
-
-    auto new_Y = torch::linalg::solve(-2 * S, R, true);
+    auto new_Y = torch::linalg::solve(-2 * Sn.permute({2, 0, 1}), Rn.permute({1, 0}), true);
     params.Y = new_Y.permute({1, 0}).flatten().reshape({K, c});
 }
 
 
-bool dcq::algorithm::update_M(int iy, int ix, float *M_data, float *Y_data, float *p_data, float *bii_data,
+bool dcq::algorithm::update_M(int iy, int ix, int *M_data, float *Y_data, float *p_data, float *bii_data,
                               int ks, int h, int w, int c, int K) {
     float *pi = &p_data[iy * w * c + ix * c];
-    float *mi = &M_data[iy * w * K + ix * K];
+    int *mi = &M_data[iy * w + ix];
     float min = INFINITY;
     int amin = 0;
-    for (int i = 0; i < K; i++) {
-        float *yv = &Y_data[i * c];
+    for (int v = 0; v < K; v++) {
+        float *yv = &Y_data[v * c];
         float sum = 0;
-        for (int j = 0; j < c; j++) {
-            float pic = pi[j];
-            float biic = bii_data[j];
-            float yvc = yv[j];
+        for (int ci = 0; ci < c; ci++) {
+            float pic = pi[ci];
+            float biic = bii_data[ci];
+            float yvc = yv[ci];
             sum += yvc * (pic + biic * yvc);
         }
         if (sum < min) {
             min = sum;
-            amin = i;
+            amin = v;
         }
     }
-    bool changed = mi[amin] == 0.0f;
-    for (int i = 0; i < K; i++) {
-        mi[i] = 0;
-    }
-    mi[amin] = 1;
+    bool changed = *mi != amin;
+    *mi = amin;
     return changed;
-}
-
-int argmax(float *data, int len) {
-    float max = -INFINITY;
-    int amax = 0;
-    for (int i = 0; i < len; i++) {
-        if (data[i] > max) {
-            amax = i;
-            max = data[i];
-        }
-    }
-    return amax;
 }
 
 
 void
-dcq::algorithm::update_p(int iy, int ix, float *M_data, float *Y_data, float *a_data, float *b0_data, float *p_data,
+dcq::algorithm::update_p(int iy, int ix, int *M_data, float *Y_data, float *a_data, float *b0_data, float *p_data,
                          int ks, int h, int w, int c, int K) {
     int ksh = ks / 2;
     int top = std::max(iy - ksh, 0);
@@ -284,7 +259,7 @@ dcq::algorithm::update_p(int iy, int ix, float *M_data, float *Y_data, float *a_
                     if (ix < 0 || iy < 0 || iy >= h || ix >= w) {
                         continue;
                     }
-                    int amax = argmax(&M_data[iy * w * K + ix * K], K);
+                    int amax = M_data[iy * w + ix];
                     float *MY = &Y_data[amax * c];
                     float *b0 = &b0_data[ki * ks * c + kj * c];
                     for (int ci = 0; ci < c; ci++) {
@@ -340,8 +315,7 @@ float dcq::algorithm::compute_loss(
 void dcq::algorithm::propagate_M(dcq::Parameters &params) {
     int h = params.M.size(0);
     int w = params.M.size(1);
-    int k = params.M.size(2);
-    auto new_M = torch::zeros({h * 2, w * 2, k});
+    auto new_M = torch::zeros({h * 2, w * 2}, torch::kInt32);
 
     new_M.index_put_({Slice(None, None, 2), Slice(None, None, 2)}, params.M);
     new_M.index_put_({Slice(None, None, 2), Slice(1, None, 2)}, params.M);
