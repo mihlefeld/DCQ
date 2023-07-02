@@ -121,6 +121,7 @@ int main(int argc, char *argv[]) {
 
     dcq::Parameters params;
     params = dcq::algorithm::solve(tensor, ks, palette);
+    dcq::utils::count_assignments("Final Assignments", params.M, params.Y.size(0));
     auto recon = dcq::utils::tensor_to_image(params.reconstruct());
     cv::imwrite((output_path / (name + ".png")).string(), recon);
     return 0;

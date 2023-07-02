@@ -86,7 +86,7 @@ void dcq::utils::compare_show(const std::string &window_name, const torch::Tenso
 
 void dcq::utils::count_assignments(const std::string &prefix, torch::Tensor &M, int K) {
     int max = M.max().item<int>();
-    std::cout << prefix << " K=" << K << " max=" << max << ": ";
+    std::cout << prefix << " ";
     auto total = M.size(0) * M.size(1);
     for (int i = 0; i < K; i++) {
         std::cout << ((M == i).sum() / total).item<float>() << " ";

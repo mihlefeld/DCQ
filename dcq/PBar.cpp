@@ -15,7 +15,7 @@ void PBar::update() {
     float assign_s = to_s(assign_t);
 
     std::cout << std::setprecision(3) << "T=" << t0_s << "s " << "K=" << K << "/" << max_K << " L=" << l << "/"
-              << max_L << " loss=" << loss << " cmp=" << compute_s << "s asg " << assign_s << "s add="
+              << max_L << " loss=" << loss << " cmp=" << compute_s << "s asg=" << assign_s << "s add="
               << add_s << "s                       \r" << std::flush;
 
 }

@@ -59,11 +59,18 @@ dcq::Constants dcq::init::init_constants(const torch::Tensor &X, const torch::Te
     int wk = w + 2 * kernel_pad;
     int ksh = b.size(0) / 2;
 
+    auto colors_mixed = X.index({Slice(), Slice(), 0}).clone();
+    for (int i = 1; i < c; i++) {
+        colors_mixed += std::pow(10, i) * X.index({Slice(), Slice(), i});
+    }
+    auto unique_colors = std::get<0>(torch::_unique(colors_mixed));
+    int max_K_reduced = std::min((int) unique_colors.size(0), max_K);
+
     // compute the maximal number of max_level possible without making the image too small
     auto max_level = (int) std::floor(std::log2(std::min(hk, wk) / 5));
 
     // construct geometric space from logspace
-    auto space = torch::logspace(std::log2(max_K), std::log2(2), max_level + 1, 2);
+    auto space = torch::logspace(std::log2(max_K_reduced), std::log2(2), max_level + 1, 2);
     space = space.floor().to(torch::kInt32);
 
     // pad the image
@@ -103,5 +110,5 @@ dcq::Constants dcq::init::init_constants(const torch::Tensor &X, const torch::Te
         Xs.push_back(new_X);
         as.push_back(new_a);
     }
-    return {Xs, as, space, h, w, max_K, max_level};
+    return {Xs, as, space, h, w, max_K_reduced, max_level};
 }

@@ -209,6 +209,7 @@ void dcq::algorithm::compute_colors(
     float *S_data = Sn.data_ptr<float>();
     float *R_data = Rn.data_ptr<float>();
 
+
     for (int iy = 0; iy < h; iy++) {
         for (int ky = 0; ky < ks; ky++) {
             for (int ix = 0; ix < w; ix++) {
@@ -236,8 +237,24 @@ void dcq::algorithm::compute_colors(
         }
     }
 
-    auto new_Y = torch::linalg::solve(-2 * Sn.permute({2, 0, 1}), Rn.permute({1, 0}), true);
-    params.Y = new_Y.permute({1, 0}).flatten().reshape({K, c});
+    for (int v = 0; v < K; v++) {
+        for (int ci = 0; ci < c; ci++) {
+            if (S_data[v * K * c + v * c + ci] == 0) {
+                S_data[v * K * c + v * c + ci] = 1.0f;
+            }
+        }
+    }
+
+    try {
+        auto new_Y = torch::linalg::solve(-2 * Sn.permute({2, 0, 1}), Rn.permute({1, 0}), true);
+        params.Y = new_Y.permute({1, 0}).flatten().reshape({K, c});
+    } catch (torch::LinAlgError &e) {
+        for (int ci = 0; ci < c; ci++) {
+            std::cout << "S[" << ci << "]" << std::endl;
+            std::cout << Sn.index({Slice(), Slice(), ci}) << std::endl;
+        }
+        std::exit(-1);
+    }
 }
 
 
