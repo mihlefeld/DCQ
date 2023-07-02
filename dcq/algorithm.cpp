@@ -275,7 +275,6 @@ dcq::algorithm::update_p(int iy, int ix, int *M_data, float *Y_data, float *a_da
     int bottom = std::min(iy + ksh, h - 1) + 1;
     int left = std::max(ix - ksh, 0);
     int right = std::min(ix + ksh, w - 1) + 1;
-
     float sum[4];
 
     for (int i0 = top; i0 < bottom; i0++) {
