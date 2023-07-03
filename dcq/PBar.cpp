@@ -13,10 +13,11 @@ void PBar::update() {
     float add_s = to_s(add_t);
     float compute_s = to_s(compute_t);
     float assign_s = to_s(assign_t);
+    float loss_s = to_s(loss_t);
 
     std::cout << std::setprecision(3) << "T=" << t0_s << "s " << "K=" << K << "/" << max_K << " L=" << l << "/"
               << max_L << " loss=" << loss << " cmp=" << compute_s << "s asg=" << assign_s << "s add="
-              << add_s << "s                       \r" << std::flush;
+              << add_s << "s loss=" << loss_s << "s                       \r" << std::flush;
 
 }
 
@@ -31,6 +32,9 @@ void PBar::start(pbar_timers timer) {
             break;
         case ADD_TIMER:
             t0 = &this->add_t0;
+            break;
+        case LOSS_TIMER:
+            t0 = &this->loss_t0;
             break;
     }
     *t0 = std::chrono::high_resolution_clock::now();
@@ -51,6 +55,10 @@ void PBar::stop(pbar_timers timer) {
         case ADD_TIMER:
             t0 = this->add_t0;
             ms = &add_t;
+            break;
+        case LOSS_TIMER:
+            t0 = this->loss_t0;
+            ms = &loss_t;
             break;
     }
     auto now = std::chrono::high_resolution_clock::now();

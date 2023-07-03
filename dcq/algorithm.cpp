@@ -4,7 +4,9 @@
 #include "algorithm.h"
 #include "init.h"
 #include "utils.h"
+#include <stdio.h>
 #include <algorithm>
+#include <omp.h>
 
 using namespace std::chrono;
 using namespace torch::indexing;
@@ -70,8 +72,9 @@ dcq::Parameters dcq::algorithm::icm(
     float loss = compute_loss(constants.X, params, kernels.W);
     float old_loss = INFINITY;
     int changed;
+    int iterations = 0;
     do {
-        old_loss = loss;
+        iterations += 1;
 
         pbar.start(pbar_timers::ASSIGN_TIMER);
         changed = compute_assignments(params, constants, kernels, p);
@@ -81,10 +84,15 @@ dcq::Parameters dcq::algorithm::icm(
         compute_colors(params, kernels.b, constants.a);
         pbar.stop(pbar_timers::COMPUTE_TIMER);
 
-        loss = compute_loss(constants.X, params, kernels.W);
-        pbar.loss = loss;
+        if (iterations % 10 == 0) {
+            old_loss = loss;
+            pbar.start(pbar_timers::LOSS_TIMER);
+            loss = compute_loss(constants.X, params, kernels.W);
+            pbar.stop(pbar_timers::LOSS_TIMER);
+            pbar.loss = loss;
+        }
         pbar.update();
-    } while (changed > 0 && loss < old_loss);
+    } while (changed > 0 && loss < old_loss && !dcq::utils::is_close(loss, old_loss));
     return params;
 }
 
@@ -130,6 +138,35 @@ void dcq::algorithm::add_color(
     params.Y = new_Y;
 }
 
+int update_rows(int start_row, int end_row, int h, int w, bool *changed_map, int *M_data, float *Y_data,
+                float *p_data, float *a_data, float *b0_data, float *bii_data, int ks, int c, int K) {
+    int ksh = ks / 2;
+    int changed = 0;
+    for (int iy = start_row; iy < end_row; iy++) {
+        for (int ix = 0; ix < w - 1; ix++) {
+            if (!changed_map[iy * w + ix]) continue;
+
+            if (dcq::algorithm::update_M(iy, ix, M_data, Y_data, p_data, bii_data, ks, h, w, c, K)) {
+                dcq::algorithm::update_p(iy, ix, M_data, Y_data, a_data, b0_data, p_data, ks, h, w, c, K);
+                changed += 1;
+                int ktop = std::max(iy - ksh, 0);
+                int kbottom = std::min(iy + ksh, h - 1) + 1;
+                int kleft = std::max(ix - ksh, 0);
+                int kright = std::min(ix + ksh, w - 1) + 1;
+
+                for (int ky = ktop; ky < kbottom; ky++) {
+                    for (int kx = kleft; kx < kright; kx++) {
+                        changed_map[ky * w + kx] = true;
+                    }
+                }
+            }
+            changed_map[iy * w + ix] = false;
+        }
+    }
+    return changed;
+}
+
+
 int dcq::algorithm::compute_assignments(
         dcq::Parameters &params,
         dcq::LConst &constants,
@@ -150,6 +187,12 @@ int dcq::algorithm::compute_assignments(
     int c = p.size(2);
     int K = params.Y.size(0);
     int changed = 0;
+    int max_num_threads = h / (ks * 2);
+    int rows = h;
+    if (max_num_threads > 0) {
+        rows = h / (max_num_threads * 2);
+    }
+
 
     auto changed_map = new bool[h * w];
 
@@ -157,32 +200,35 @@ int dcq::algorithm::compute_assignments(
         changed_map[i] = true;
     }
 
+    int iterations = 0;
     int total_changed = 0;
     do {
         changed = 0;
-        for (int iy = 0; iy < h - 1; iy++) {
-            for (int ix = 0; ix < w - 1; ix++) {
-                if (!changed_map[iy * w + ix]) continue;
+        if (max_num_threads < 4) {
+            changed += update_rows(0, h, h, w, changed_map, M_data, Y_data, p_data, a_data, b0_data,
+                                   bii_data, ks, c, K);
 
-                if (update_M(iy, ix, M_data, Y_data, p_data, bii_data, ks, h, w, c, K)) {
-                    update_p(iy, ix, M_data, Y_data, a_data, b0_data, p_data, ks, h, w, c, K);
-                    changed += 1;
-                    int ktop = std::max(iy - ksh, 0);
-                    int kbottom = std::min(iy + ksh, h - 1) + 1;
-                    int kleft = std::max(ix - ksh, 0);
-                    int kright = std::min(ix + ksh, w - 1) + 1;
-
-                    for (int ky = ktop; ky < kbottom; ky++) {
-                        for (int kx = kleft; kx < kright; kx++) {
-                            changed_map[ky * w + kx] = true;
-                        }
-                    }
-                }
-                changed_map[iy * w + ix] = false;
+        } else {
+#pragma omp parallel for num_threads(omp_get_max_threads()) default(none) shared(changed_map, M_data, Y_data, p_data, a_data, b0_data, bii_data) firstprivate(max_num_threads, rows, h, w, ks, c, K) reduction(+: changed)
+            for (int i = 0; i < max_num_threads; i++) {
+                int low = rows * (i * 2);
+                int high = rows * (i * 2 + 1);
+                changed += update_rows(low, high, h, w, changed_map, M_data, Y_data, p_data, a_data, b0_data,
+                                       bii_data, ks, c, K);
             }
+#pragma omp parallel for num_threads(omp_get_max_threads()) default(none) shared(changed_map, M_data, Y_data, p_data, a_data, b0_data, bii_data) firstprivate(max_num_threads, rows, h, w, ks, c, K) reduction(+: changed)
+            for (int i = 0; i < max_num_threads; i++) {
+                int low = rows * (i * 2 + 1);
+                int high = rows * (i * 2 + 2);
+                if (i == max_num_threads - 1) high = h;
+                changed += update_rows(low, high, h, w, changed_map, M_data, Y_data, p_data, a_data, b0_data,
+                                       bii_data, ks, c, K);
+            }
+
         }
+        iterations += 1;
         total_changed += changed;
-    } while (changed > 0);
+    } while (changed > 0 && iterations < 4);
 
     delete[] changed_map;
 
@@ -199,34 +245,45 @@ void dcq::algorithm::compute_colors(
     int h = params.M.size(0);
     int w = params.M.size(1);
     int ks = b.size(0);
-    int pad = b.size(0) / 2;
-
-    auto Sn = torch::zeros({K, K, c});
+    int max_threads = std::min(omp_get_max_threads(), h);
+    int rows = h / max_threads;
     auto Rn = torch::zeros({K, c});
+    auto St = torch::zeros({max_threads, K, K, c});
+    auto S_threads = St.data_ptr<float>();
     int *M_data = params.M.data_ptr<int>();
     float *a_data = a.data_ptr<float>();
     float *b_data = b.data_ptr<float>();
-    float *S_data = Sn.data_ptr<float>();
     float *R_data = Rn.data_ptr<float>();
 
 
-    for (int iy = 0; iy < h; iy++) {
-        for (int ky = 0; ky < ks; ky++) {
-            for (int ix = 0; ix < w; ix++) {
-                int v = M_data[iy * w + ix];
-                int kiy = iy + ky - ks / 2;
-                for (int kx = 0; kx < ks; kx++) {
-                    int kix = ix + kx - ks / 2;
-                    if (kiy < 0 || kix < 0 || kiy >= h || kix >= w) continue;
-                    int al = M_data[kiy * w + kix];
-                    float *bxy = &b_data[ky * ks * c + kx * c];
-                    for (int ci = 0; ci < c; ci++) {
-                        S_data[v * K * c + al * c + ci] += bxy[ci];
+#pragma omp parallel for default(none) num_threads(max_threads) shared(S_threads, M_data, b_data) firstprivate(K, c, h, w, ks, rows, max_threads)
+    for (int thread = 0; thread < max_threads; thread++) {
+        float *S_data = &S_threads[thread * K * K * c];
+        int low = rows * thread;
+        int high = (thread + 1) * rows;
+        if (thread == max_threads - 1) high = h;
+
+        for (int iy = low; iy < high; iy++) {
+            for (int ky = 0; ky < ks; ky++) {
+                for (int ix = 0; ix < w; ix++) {
+                    int v = M_data[iy * w + ix];
+                    int kiy = iy + ky - ks / 2;
+                    for (int kx = 0; kx < ks; kx++) {
+                        int kix = ix + kx - ks / 2;
+                        if (kiy < 0 || kix < 0 || kiy >= h || kix >= w) continue;
+                        int al = M_data[kiy * w + kix];
+                        float *bxy = &b_data[ky * ks * c + kx * c];
+                        for (int ci = 0; ci < c; ci++) {
+                            S_data[v * K * c + al * c + ci] += bxy[ci];
+                        }
                     }
                 }
             }
         }
     }
+
+    auto Sn = St.sum({0});
+    auto S_data = Sn.data_ptr<float>();
 
     for (int iy = 0; iy < h; iy++) {
         for (int ix = 0; ix < w; ix++) {

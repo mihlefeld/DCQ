@@ -13,7 +13,8 @@ typedef std::chrono::time_point<std::chrono::high_resolution_clock> hrclock;
 enum pbar_timers {
     ASSIGN_TIMER = 0,
     COMPUTE_TIMER = 1,
-    ADD_TIMER = 2
+    ADD_TIMER = 2,
+    LOSS_TIMER = 3
 };
 
 class PBar {
@@ -21,9 +22,11 @@ class PBar {
     hrclock assign_t0;
     hrclock compute_t0;
     hrclock add_t0;
-    long assign_t{};
-    long compute_t{};
-    long add_t{};
+    hrclock loss_t0;
+    long assign_t = 0;
+    long compute_t = 0;
+    long add_t = 0;
+    long loss_t = 0;
 
     static float to_s(long ms);
 
