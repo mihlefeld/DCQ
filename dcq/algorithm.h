@@ -11,6 +11,8 @@
 namespace dcq::algorithm {
     dcq::Parameters solve(torch::Tensor &X, int ks, int max_K);
 
+    dcq::Parameters solve(torch::Tensor &X, int ks, int max_K, dcq::Parameters &params);
+
     dcq::Parameters icm(dcq::LConst &constants, dcq::Parameters &params,
                         dcq::Kernels &kernels, torch::Tensor &p, PBar &pbar);
 

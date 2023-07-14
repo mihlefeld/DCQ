@@ -10,6 +10,7 @@
 
 namespace dcq::init {
     dcq::Parameters init_parameters(const torch::Tensor &Xl, const torch::Tensor &Xs);
+    dcq::Parameters init_parameters(const torch::Tensor &X);
 
     dcq::Kernels init_kernels(int ks, int c);
 

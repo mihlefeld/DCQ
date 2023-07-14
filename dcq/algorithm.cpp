@@ -4,6 +4,7 @@
 #include "algorithm.h"
 #include "init.h"
 #include "utils.h"
+#include "PBar.h"
 #include <stdio.h>
 #include <algorithm>
 #include <omp.h>
@@ -59,6 +60,22 @@ dcq::Parameters dcq::algorithm::solve(
     return {sub_M, params.Y};
 }
 
+dcq::Parameters dcq::algorithm::solve(torch::Tensor &X, int ks, int max_K, dcq::Parameters &params) {
+    auto pbar = PBar(2, 0);
+    int c = X.size(2);
+    auto kernels = dcq::init::init_kernels(ks, c);
+    auto constants = dcq::init::init_constants(X, kernels.b, max_K);
+    auto ksh = kernels.b.size(0) / 2;
+    auto a = dcq::utils::from_batched(
+            -2 * F::conv2d(dcq::utils::to_batched(X), dcq::utils::to_conv_kernel(kernels.b),
+                           F::Conv2dFuncOptions().padding({ksh, ksh}).groups(c))
+    );
+    LConst lconst{X, a, max_K};
+    auto p = compute_p(params, lconst.a, kernels.b0);
+    icm(lconst, params, kernels, p, pbar);
+    return params;
+}
+
 dcq::Parameters dcq::algorithm::icm(
         dcq::LConst &constants,
         dcq::Parameters &params,
@@ -70,6 +87,8 @@ dcq::Parameters dcq::algorithm::icm(
     int w = params.M.size(1);
     int K = params.Y.size(0);
     float loss = compute_loss(constants.X, params, kernels.W);
+    pbar.loss = loss;
+    pbar.update();
     float old_loss = INFINITY;
     int changed;
     int iterations = 0;
@@ -84,13 +103,11 @@ dcq::Parameters dcq::algorithm::icm(
         compute_colors(params, kernels.b, constants.a);
         pbar.stop(pbar_timers::COMPUTE_TIMER);
 
-        if (iterations % 10 == 0) {
-            old_loss = loss;
-            pbar.start(pbar_timers::LOSS_TIMER);
-            loss = compute_loss(constants.X, params, kernels.W);
-            pbar.stop(pbar_timers::LOSS_TIMER);
-            pbar.loss = loss;
-        }
+        old_loss = loss;
+        pbar.start(pbar_timers::LOSS_TIMER);
+        loss = compute_loss(constants.X, params, kernels.W);
+        pbar.stop(pbar_timers::LOSS_TIMER);
+        pbar.loss = loss;
         pbar.update();
     } while (changed > 0 && loss < old_loss && !dcq::utils::is_close(loss, old_loss));
     return params;
@@ -104,13 +121,18 @@ void dcq::algorithm::add_color(
     auto new_M = params.M.clone();
     auto new_Y = F::pad(params.Y.index({None}), F::PadFuncOptions({0, 0, 0, 1})).index({0});
 
-    auto comp = torch::arange(K).reshape({1, 1, K});
-    auto one_hot_M = params.M.index({Slice(), Slice(), None}) == comp;
-
     auto MY = params.reconstruct();
     auto diff = (X - MY).pow(2).sum({-1}, true);
-    auto distortions = (diff * one_hot_M).sum({1, 0});
-    auto v = distortions.argmax().item<int>();
+
+    float max_distortion = -INFINITY;
+    int v = 0;
+    for (int i = 0; i < K; i++) {
+        auto distortion = diff.index({params.M == i}).sum().item<float>();
+        if (distortion > max_distortion) {
+            max_distortion = distortion;
+            v = i;
+        }
+    }
 
     auto bool_M = params.M == v;
     auto colors = X.index({bool_M});

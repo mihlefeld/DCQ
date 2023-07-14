@@ -6,7 +6,7 @@
 #include <iomanip>
 #include <iostream>
 
-void PBar::update() {
+void dcq::PBar::update() {
     auto now = std::chrono::high_resolution_clock::now();
     long ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - t0).count();
     float t0_s = to_s(ms);
@@ -21,7 +21,7 @@ void PBar::update() {
 
 }
 
-void PBar::start(pbar_timers timer) {
+void dcq::PBar::start(pbar_timers timer) {
     hrclock *t0;
     switch (timer) {
         case ASSIGN_TIMER:
@@ -40,7 +40,7 @@ void PBar::start(pbar_timers timer) {
     *t0 = std::chrono::high_resolution_clock::now();
 }
 
-void PBar::stop(pbar_timers timer) {
+void dcq::PBar::stop(pbar_timers timer) {
     hrclock t0;
     long *ms;
     switch (timer) {
@@ -66,18 +66,18 @@ void PBar::stop(pbar_timers timer) {
     update();
 }
 
-PBar::PBar(int K, int l) {
+dcq::PBar::PBar(int K, int l) {
     this->K = K;
     this->l = l;
     t0 = std::chrono::high_resolution_clock::now();
 }
 
-float PBar::to_s(long ms) {
+float dcq::PBar::to_s(long ms) {
     float seconds = (float) ms / 1000;
     return seconds;
 }
 
-PBar::~PBar() {
+dcq::PBar::~PBar() {
     update();
     std::cout << std::endl;
 }

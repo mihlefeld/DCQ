@@ -18,7 +18,10 @@ dcq::Parameters dcq::init::init_parameters(const torch::Tensor &Xl, const torch:
     auto M = torch::zeros({h, w}, torch::kInt32);
     auto Y = Xl.mean({1, 0}).reshape({1, c});
     return {M, Y};
+}
 
+dcq::Parameters dcq::init::init_parameters(const torch::Tensor &X) {
+    return init_parameters(X, X);
 }
 
 dcq::Kernels dcq::init::init_kernels(int ks, int c) {

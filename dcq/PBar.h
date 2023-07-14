@@ -17,37 +17,39 @@ enum pbar_timers {
     LOSS_TIMER = 3
 };
 
-class PBar {
-    hrclock t0;
-    hrclock assign_t0;
-    hrclock compute_t0;
-    hrclock add_t0;
-    hrclock loss_t0;
-    long assign_t = 0;
-    long compute_t = 0;
-    long add_t = 0;
-    long loss_t = 0;
+namespace dcq {
+    class PBar {
+        hrclock t0;
+        hrclock assign_t0;
+        hrclock compute_t0;
+        hrclock add_t0;
+        hrclock loss_t0;
+        long assign_t = 0;
+        long compute_t = 0;
+        long add_t = 0;
+        long loss_t = 0;
 
-    static float to_s(long ms);
+        static float to_s(long ms);
 
-public:
-    float loss = INFINITY;
-    int K = 0;
-    int l = 0;
-    int max_L = 0;
-    int max_K = 0;
+    public:
+        float loss = INFINITY;
+        int K = 0;
+        int l = 0;
+        int max_L = 0;
+        int max_K = 0;
 
-    ~PBar();
+        ~PBar();
 
-    void start(pbar_timers timer);
+        void start(pbar_timers timer);
 
-    void stop(pbar_timers timer);
+        void stop(pbar_timers timer);
 
-    void update();
+        void update();
 
-public:
-    PBar(int K, int l);
-};
+    public:
+        PBar(int K, int l);
+    };
+}
 
 
 #endif //DCQ_PBAR_H

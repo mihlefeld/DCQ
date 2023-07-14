@@ -12,7 +12,8 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 add_executable(DCQ
         main.cpp dcq/algorithm.h dcq/init.h dcq/types.h dcq/utils.h
         dcq/algorithm.cpp dcq/init.cpp dcq/utils.cpp
-        dcq/PBar.cpp dcq/PBar.h)
+        dcq/PBar.cpp dcq/PBar.h dcq/floyd_steinberg.cpp dcq/floyd_steinberg.h)
+
 
 target_link_libraries(DCQ ${OpenCV_LIBS})
 target_link_libraries(DCQ  OpenMP::OpenMP_CXX)
