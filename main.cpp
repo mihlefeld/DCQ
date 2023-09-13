@@ -3,16 +3,18 @@
 #include "dcq/utils.h"
 #include "dcq/init.h"
 #include "dcq/floyd_steinberg.h"
+#include "dcq/alpha.h"
 #include <omp.h>
 #include <filesystem>
 
 namespace fs = std::filesystem;
 
-
 int main(int argc, char *argv[]) {
     int ks = 3;
     int palette = 5;
     std::string mode = "DCQ";
+    std::string alpha_mode = "noop";
+    std::string cluster_mode = "kmeans";
     if (argc < 3) {
         std::cout << "Not enough arguments" << std::endl;
         return 1;
@@ -28,6 +30,12 @@ int main(int argc, char *argv[]) {
     if (argc >= 6) {
         mode = argv[5];
     }
+    if (argc >= 7) {
+        alpha_mode = argv[6];
+    }
+    if (argc >= 8) {
+        cluster_mode = argv[7];
+    }
 
     auto name = input_path.filename().string();
     name = name.substr(0, name.size() - 4);
@@ -39,7 +47,9 @@ int main(int argc, char *argv[]) {
     auto img = cv::imread(input_path.string(), cv::IMREAD_UNCHANGED);
     std::cout << "Reading image " << input_path << "with size " << img.rows << "x" << img.cols << "x" << img.channels()
               << std::endl;
-    auto tensor = dcq::utils::image_to_tensor(img);
+    auto tensor_ = dcq::utils::image_to_tensor(img);
+    dcq::alpha::preprocess(tensor_, alpha_mode);
+    auto tensor = tensor_.clone();
     dcq::Parameters params;
 
     if (mode == "DCQ") {
@@ -47,15 +57,26 @@ int main(int argc, char *argv[]) {
     }
 
     if (mode == "FS") {
-        params = dcq::fs::solve(tensor, palette);
+        params = dcq::fs::solve(tensor, palette, cluster_mode);
     }
 
-    if (mode == "FS-DCQ") {
-        params = dcq::fs::solve(tensor, palette);
+    if (mode == "FS-ICM") {
+        params = dcq::fs::solve_icm(tensor, palette, cluster_mode);
+    }
+
+    if (mode == "FS-ICM-DCQ") {
+        params = dcq::fs::solve_icm(tensor, palette, cluster_mode);
         params = dcq::algorithm::solve(tensor, ks, palette, params);
     }
 
-    auto recon = dcq::utils::tensor_to_image(params.reconstruct());
+    if (mode == "FS-DCQ") {
+        params = dcq::fs::solve(tensor, palette, cluster_mode);
+        params = dcq::algorithm::solve(tensor, ks, palette, params);
+    }
+
+    auto result = params.reconstruct();
+    dcq::alpha::postprocess(result, alpha_mode);
+    auto recon = dcq::utils::tensor_to_image(result);
     cv::imwrite((output_path / (name + ".png")).string(), recon);
     return 0;
 }

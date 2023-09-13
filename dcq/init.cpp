@@ -52,7 +52,6 @@ dcq::Kernels dcq::init::init_kernels(int ks, int c) {
     return {W, b, b0};
 }
 
-
 dcq::Constants dcq::init::init_constants(const torch::Tensor &X, const torch::Tensor &b, int max_K) {
     int h = X.size(0);
     int w = X.size(1);
