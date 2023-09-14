@@ -125,7 +125,7 @@ torch::Tensor dcq::fs::cluster(const torch::Tensor &X, int palette_size, const s
         return k_means(X, palette_size, pbar);
     }
     if (mode == "median_cuts") {
-        return dcq::fs::median_cuts(X, palette_size);
+        return dcq::fs::median_cuts(X, palette_size, pbar);
     }
 }
 
@@ -151,7 +151,7 @@ void dither(int h, int w, int c, int k, float *X, int *M, float *Y, dcq::PBar &p
             auto new_pixel = &Y[color_id * c];
             M[iy * w + ix] = color_id;
             set_error(q_error, old_pixel, new_pixel, c);
-/*
+/* the commented block above
  *      pixels[x + 1][y    ] := pixels[x + 1][y    ] + quant_error × 7 / 16
         pixels[x - 1][y + 1] := pixels[x - 1][y + 1] + quant_error × 3 / 16
         pixels[x    ][y + 1] := pixels[x    ][y + 1] + quant_error × 5 / 16
@@ -160,6 +160,7 @@ void dither(int h, int w, int c, int k, float *X, int *M, float *Y, dcq::PBar &p
             if (ix < w - 1) {
                 add_error(&X[iy * w * c + (ix + 1) * c], q_error, 7.0f / 16.0f, c);
                 if (iy < h - 1) {
+                    // this should be wrong, but doing it the right way as seen in the commented block above did not work
                     add_error(&X[(iy + 1) * w * c + (ix + 1) * c], q_error, 1.0f / 16.0f, c);
                 }
             }
@@ -177,6 +178,7 @@ void dither(int h, int w, int c, int k, float *X, int *M, float *Y, dcq::PBar &p
 
 
 dcq::Parameters dcq::fs::solve(const torch::Tensor &X, int palette_size, const std::string &mode) {
+    // simple floyd steinberg dithering with clustering to get the initial palette
     auto pbar = PBar(0, 0);
     auto palette = dcq::fs::cluster(X, palette_size, mode, pbar);
     auto parameters = dcq::init::init_parameters(X);
@@ -194,11 +196,15 @@ dcq::Parameters dcq::fs::solve(const torch::Tensor &X, int palette_size, const s
 }
 
 dcq::Parameters dcq::fs::solve_icm(torch::Tensor &X, int palette_size, const std::string &mode) {
+    // The idea here was to use the compute colors function iteratively with floyd steinberg dithering
+    // to hopefully further reduce the loss. This did not work well.
     int h = X.size(0);
     int w = X.size(1);
     int c = X.size(2);
     auto pbar = PBar(0, 0);
+    // use a clustering algorithm to compute the inital palette
     auto palette = dcq::fs::cluster(X, palette_size, mode, pbar);
+    // this does a lot of unnecessary things, because it was designed for the DCQ approach
     auto parameters = dcq::init::init_parameters(X);
     auto kernels = dcq::init::init_kernels(3, c);
     auto a = dcq::utils::from_batched(
@@ -215,12 +221,15 @@ dcq::Parameters dcq::fs::solve_icm(torch::Tensor &X, int palette_size, const std
     do {
         iterations++;
         old_loss = loss;
+        // we first dither with floyd steinberg
         dither(h, w, c, palette_size, X_ptr, parameters.M.data_ptr<int>(), parameters.Y.data_ptr<float>(), pbar);
+        // then we recompute the colors to minimize the loss
         dcq::algorithm::compute_colors(parameters, kernels.b, a);
         loss = dcq::algorithm::compute_loss(X, parameters, kernels.W);
         pbar.loss = loss;
         pbar.l = iterations;
         pbar.update();
+        // and as long as we have a significant improvement in the loss, we continue
     } while (!dcq::utils::is_close(loss, old_loss));
     return parameters;
 }

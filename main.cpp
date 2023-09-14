@@ -9,6 +9,16 @@
 
 namespace fs = std::filesystem;
 
+/*
+ * Program expects system arguments in specified order:
+ * input_path
+ * output_path
+ * kernel_size: size of the kernel used for the Dithered Color Quantization approach
+ * palette_size: maximum number of colors to use
+ * mode: how to quantize the image, one of the following: DCQ, FS, FS-ICM, FS-ICM-DCQ, FS-DCQ
+ * alpha_mode: how to handle the alpha channel, one of: quantize, divide, none
+ * cluster_mode: how to compute the starting palette for Floyd-Steinberg: k_means, median_cuts
+ */
 int main(int argc, char *argv[]) {
     int ks = 3;
     int palette = 5;

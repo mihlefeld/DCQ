@@ -83,6 +83,7 @@ dcq::Parameters dcq::algorithm::icm(
         torch::Tensor &p,
         PBar &pbar
 ) {
+    // iteratively improve the result by repeatedly assigning colors to pixels and then recomputing the colors
     int h = params.M.size(0);
     int w = params.M.size(1);
     int K = params.Y.size(0);
@@ -117,6 +118,7 @@ void dcq::algorithm::add_color(
         torch::Tensor &X,
         dcq::Parameters &params
 ) {
+    // add a color to the palette by splitting the cluster with the highest distortion
     int K = params.Y.size(0);
     auto new_M = params.M.clone();
     auto new_Y = F::pad(params.Y.index({None}), F::PadFuncOptions({0, 0, 0, 1})).index({0});
@@ -195,6 +197,7 @@ int dcq::algorithm::compute_assignments(
         dcq::Kernels &kernels,
         torch::Tensor &p
 ) {
+    // compute the assigned color for each pixel by optimizing the loss function
     int ks = kernels.b.size(0);
     int ksh = ks / 2;
     auto M_data = params.M.data_ptr<int>();
@@ -262,6 +265,7 @@ void dcq::algorithm::compute_colors(
         torch::Tensor &b,
         torch::Tensor &a
 ) {
+    // recompute the colors by minimizing the loss function
     int K = params.Y.size(0);
     int c = params.Y.size(1);
     int h = params.M.size(0);
@@ -339,6 +343,7 @@ void dcq::algorithm::compute_colors(
 
 bool dcq::algorithm::update_M(int iy, int ix, int *M_data, float *Y_data, float *p_data, float *bii_data,
                               int ks, int h, int w, int c, int K) {
+    // for a given pixel update the assigned color to the one that has the lowest loss
     float *pi = &p_data[iy * w * c + ix * c];
     int *mi = &M_data[iy * w + ix];
     float min = INFINITY;
@@ -366,6 +371,7 @@ bool dcq::algorithm::update_M(int iy, int ix, int *M_data, float *Y_data, float 
 void
 dcq::algorithm::update_p(int iy, int ix, int *M_data, float *Y_data, float *a_data, float *b0_data, float *p_data,
                          int ks, int h, int w, int c, int K) {
+    // update the bookkeeping entries p
     int ksh = ks / 2;
     int top = std::max(iy - ksh, 0);
     int bottom = std::min(iy + ksh, h - 1) + 1;
@@ -409,6 +415,7 @@ torch::Tensor dcq::algorithm::compute_p(
         torch::Tensor &a,
         torch::Tensor &b0
 ) {
+    // first time computation of the bookkeeping entries p
     int c = params.Y.size(1);
     auto conved = dcq::utils::from_batched(
             F::conv2d(
@@ -441,6 +448,7 @@ float dcq::algorithm::compute_loss(
 }
 
 void dcq::algorithm::propagate_M(dcq::Parameters &params) {
+    // enlargen the assignment matrix M
     int h = params.M.size(0);
     int w = params.M.size(1);
     auto new_M = torch::zeros({h * 2, w * 2}, torch::kInt32);

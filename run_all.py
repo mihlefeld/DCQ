@@ -4,14 +4,18 @@ import click
 
 
 @click.command()
-@click.option("--input_dir", "-i")
-@click.option("--output_dir", "-o")
-@click.option("--kernel_size", "-k", type=int, default=3)
-@click.option("--palette_number", "-p", type=int, default=8)
-@click.option("--dcq_path", "-d")
-@click.option("--mode", "-m")
-@click.option("--alpha_mode", "-a", default="noop")
-@click.option("--cluster_mode", "-c", default="k_means")
+@click.option("--input_dir", "-i", type=click.Path())
+@click.option("--output_dir", "-o", type=click.Path())
+@click.option("--kernel_size", "-k", type=int, default=3, help="Specify the kernel size used by the DCQ approach.")
+@click.option("--palette_number", "-p", type=int, default=8,
+              help="Specify the maximum number of colors used for quantization")
+@click.option("--dcq_path", "-d", type=click.Path(), default="DCQ", help="Specify the path to the DCQ executable.")
+@click.option("--mode", "-m", type=click.Choice(["DCQ", "FS", "FS-ICM", "FS-ICM-DCQ", "FS-DCQ"]),
+              help="Specify which dithering algorithm to use.")
+@click.option("--alpha_mode", "-a", type=click.Choice(["divide", "quantize", "none"]), default="none",
+              help="Specify how the program should handle the alpha channel.")
+@click.option("--cluster_mode", "-c", default="k_means", type=click.Choice(["k_means", "median_cuts"]),
+              help="Specify the clustering algorithm to initialize the palette for Floyd Steinberg Dithering")
 def main(input_dir, output_dir, kernel_size, palette_number,
          dcq_path, mode, alpha_mode, cluster_mode):
     path = Path(input_dir)

@@ -12,5 +12,7 @@ RUN mkdir /home/DCQ
 WORKDIR /home/DCQ
 RUN pip install pandas scipy pillow click
 COPY . .
+RUN cmake CMakeLists.txt
+RUN make
 
-CMD while true; do sleep 1000; done
+ENTRYPOINT ["bash"]
